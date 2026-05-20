@@ -1,0 +1,31 @@
+{
+  "name": "jira-scanner",
+  "version": "1.0.0",
+  "description": "Local Electron app for scanning Jira issues",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.jirascanner.app",
+    "productName": "Jira Scanner",
+    "mac": {
+      "target": "dmg",
+      "identity": null,
+      "icon": "build-icon.icns"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "devDependencies": {
+    "electron": "^30",
+    "electron-builder": "^24"
+  }
+}

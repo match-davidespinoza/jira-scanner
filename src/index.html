@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jira Scanner</title>
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --surface2: #f0f0f2;
+      --border: #e0e0e5;
+      --text: #1d1d1f;
+      --text2: #6e6e73;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --danger: #ff3b30;
+      --warning: #ff9500;
+      --success: #34c759;
+      --badge-bg: #e8f0fe;
+      --badge-text: #1a73e8;
+      --high-bg: #fde8e8;
+      --high-text: #c5221f;
+      --card-selected: #e8f0fe;
+      --card-selected-border: #0071e3;
+      --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.06);
+      --radius: 10px;
+      --titlebar-height: 40px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1c1e;
+        --surface: #2c2c2e;
+        --surface2: #3a3a3c;
+        --border: #3a3a3c;
+        --text: #f5f5f7;
+        --text2: #98989d;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --danger: #ff453a;
+        --warning: #ff9f0a;
+        --success: #32d74b;
+        --badge-bg: #1c3a6e;
+        --badge-text: #6ab0ff;
+        --high-bg: #3b1a1a;
+        --high-text: #ff6b6b;
+        --card-selected: #1c3a6e;
+        --card-selected-border: #0a84ff;
+        --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.2);
+      }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Titlebar */
+    #titlebar {
+      height: var(--titlebar-height);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      padding: 0 16px 0 80px;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    #titlebar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text2);
+      letter-spacing: -0.01em;
+    }
+
+    /* Setup banner */
+    #setup-banner {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: none;
+      flex-shrink: 0;
+    }
+
+    #setup-banner.visible { display: block; }
+
+    #setup-banner h2 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    #setup-banner p {
+      font-size: 12px;
+      color: var(--text2);
+      margin-bottom: 14px;
+    }
+
+    #setup-banner p a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .setup-fields {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .setup-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 180px;
+    }
+
+    .setup-field label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .setup-field input {
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface2);
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .setup-field input:focus {
+      border-color: var(--accent);
+    }
+
+    #setup-save {
+      height: 32px;
+      padding: 0 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+      -webkit-app-region: no-drag;
+    }
+
+    #setup-save:hover { background: var(--accent-hover); }
+
+    #sso-login-btn {
+      height: 36px;
+      padding: 0 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, opacity 0.15s;
+      -webkit-app-region: no-drag;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #sso-login-btn:hover { background: var(--accent-hover); }
+    #sso-login-btn:disabled { opacity: 0.5; cursor: default; }
+
+    #sso-status {
+      margin-top: 12px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #sso-status.connected { color: var(--success); }
+    #sso-status.error { color: var(--danger); }
+    #sso-status.pending { color: var(--text2); }
+
+    /* Main content */
+    #main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Controls bar */
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    #controls-left {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #time-select {
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+
+    #run-btn {
+      height: 32px;
+      padding: 0 18px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      -webkit-app-region: no-drag;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #run-btn:hover { background: var(--accent-hover); }
+    #run-btn:disabled { opacity: 0.5; cursor: default; }
+
+    #settings-btn {
+      height: 32px;
+      width: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text2);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      transition: background 0.15s;
+      -webkit-app-region: no-drag;
+    }
+
+    #settings-btn:hover { background: var(--surface2); }
+
+    /* Login item toggle */
+    .login-toggle {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: var(--text2);
+      -webkit-app-region: no-drag;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-track {
+      width: 28px;
+      height: 16px;
+      border-radius: 8px;
+      background: var(--border);
+      position: relative;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .toggle-track.on { background: var(--accent); }
+
+    .toggle-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: white;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      transition: left 0.2s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .toggle-track.on .toggle-thumb { left: 14px; }
+
+    /* Report cards grid */
+    #cards-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .report-card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+      user-select: none;
+      -webkit-app-region: no-drag;
+    }
+
+    .report-card:hover {
+      border-color: var(--accent);
+      box-shadow: var(--shadow);
+    }
+
+    .report-card.selected {
+      border-color: var(--card-selected-border);
+      background: var(--card-selected);
+    }
+
+    .report-card .card-icon {
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
+
+    .report-card .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .report-card .card-desc {
+      font-size: 11px;
+      color: var(--text2);
+      line-height: 1.4;
+    }
+
+    /* Results area */
+    #results {
+      flex: 1;
+    }
+
+    #results-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    #results-title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    #results-count {
+      font-size: 12px;
+      color: var(--text2);
+      background: var(--surface2);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .issue-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .issue-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .issue-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+
+    .issue-key {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .issue-key:hover { text-decoration: underline; }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      background: var(--badge-bg);
+      color: var(--badge-text);
+    }
+
+    .badge.high, .badge.highest {
+      background: var(--high-bg);
+      color: var(--high-text);
+    }
+
+    .badge.done { background: #e6f4ea; color: #1e7e34; }
+    @media (prefers-color-scheme: dark) {
+      .badge.done { background: #1a3a22; color: #4ade80; }
+    }
+
+    .issue-title {
+      font-size: 13px;
+      font-weight: 500;
+      line-height: 1.4;
+      margin-bottom: 4px;
+    }
+
+    .issue-extra {
+      font-size: 11px;
+      color: var(--text2);
+    }
+
+    .issue-extra.overdue {
+      color: var(--danger);
+      font-weight: 500;
+    }
+
+    .comment-list {
+      margin-top: 10px;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .comment-item {
+      background: var(--surface2);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
+    .comment-author {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
+      margin-bottom: 3px;
+    }
+
+    .comment-body {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* States */
+    .state-empty, .state-error, .state-loading {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text2);
+    }
+
+    .state-loading .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .state-error { color: var(--danger); }
+    .state-empty .icon { font-size: 32px; margin-bottom: 8px; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+  </style>
+</head>
+<body>
+
+  <div id="titlebar">
+    <span id="titlebar-title">Jira Scanner</span>
+  </div>
+
+  <div id="setup-banner">
+    <h2>Connect to Jira</h2>
+    <p>Enter your Jira URL and sign in with your company SSO (Okta).</p>
+    <div class="setup-fields">
+      <div class="setup-field">
+        <label>Jira Base URL</label>
+        <input type="url" id="input-url" placeholder="https://yourcompany.atlassian.net" />
+      </div>
+      <button id="setup-save" onclick="saveUrl()">Save URL</button>
+      <button id="sso-login-btn" onclick="startSSOLogin()">
+        <span id="sso-btn-icon">🔑</span>
+        Sign in with SSO
+      </button>
+    </div>
+    <div id="sso-status" style="display:none"></div>
+  </div>
+
+  <div id="main">
+    <div id="controls">
+      <div id="controls-left">
+        <select id="time-select">
+          <option value="6">Last 6 hours</option>
+          <option value="24" selected>Last 24 hours</option>
+          <option value="48">Last 48 hours</option>
+          <option value="72">Last 72 hours</option>
+          <option value="168">Last 7 days</option>
+        </select>
+      </div>
+      <label class="login-toggle" title="Launch Jira Scanner automatically when you log in">
+        <div id="login-toggle-track" class="toggle-track" onclick="toggleLoginItem()">
+          <div class="toggle-thumb"></div>
+        </div>
+        <span>Open at login</span>
+      </label>
+      <label class="login-toggle" title="Send a system notification when new comments appear">
+        <div id="notif-toggle-track" class="toggle-track" onclick="toggleNotifications()">
+          <div class="toggle-thumb"></div>
+        </div>
+        <span>Notifications</span>
+      </label>
+      <button id="settings-btn" onclick="toggleSetup()" title="Settings">⚙</button>
+      <button id="run-btn" onclick="runReport()">
+        <span id="run-btn-icon">▶</span>
+        <span id="run-btn-label">Run Report</span>
+      </button>
+    </div>
+
+    <div id="cards-grid">
+      <div class="report-card selected" data-report="comments" onclick="selectCard(this)">
+        <div class="card-icon">💬</div>
+        <div class="card-title">Recent Comments</div>
+        <div class="card-desc">Comments within the time window on issues you're assigned to, watching, reported, tagged on, commented on, or parent tickets of those issues</div>
+      </div>
+      <div class="report-card" data-report="open" onclick="selectCard(this)">
+        <div class="card-icon">📋</div>
+        <div class="card-title">Open Tickets</div>
+        <div class="card-desc">All open issues currently assigned to you</div>
+      </div>
+      <div class="report-card" data-report="high-priority" onclick="selectCard(this)">
+        <div class="card-icon">🔴</div>
+        <div class="card-title">High Priority</div>
+        <div class="card-desc">High and Highest priority issues assigned to you</div>
+      </div>
+      <div class="report-card" data-report="recently-updated" onclick="selectCard(this)">
+        <div class="card-icon">🔄</div>
+        <div class="card-title">Recently Updated</div>
+        <div class="card-desc">Issues updated within the selected time window</div>
+      </div>
+      <div class="report-card" data-report="overdue" onclick="selectCard(this)">
+        <div class="card-icon">⏰</div>
+        <div class="card-title">Overdue Issues</div>
+        <div class="card-desc">Past-due issues with a due date that aren't done</div>
+      </div>
+      <div class="report-card" data-report="blocked" onclick="selectCard(this)">
+        <div class="card-icon">🚫</div>
+        <div class="card-title">Blocked Issues</div>
+        <div class="card-desc">Issues labeled or statused as blocked</div>
+      </div>
+    </div>
+
+    <div id="results"></div>
+  </div>
+
+  <script>
+    const { shell, ipcRenderer } = require('electron');
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+
+    const DEFAULT_JIRA_URL = 'https://e2p.atlassian.net';
+
+    function getConfig() {
+      return {
+        url: (localStorage.getItem('jira_url') || DEFAULT_JIRA_URL).replace(/\/$/, ''),
+      };
+    }
+
+    function isConfigured() {
+      return !!(getConfig().url && localStorage.getItem('jira_authenticated'));
+    }
+
+    function saveUrl() {
+      const url = document.getElementById('input-url').value.trim().replace(/\/$/, '');
+      if (!url) { alert('Please enter your Jira base URL.'); return; }
+      localStorage.setItem('jira_url', url);
+      setSSOStatus('pending', 'URL saved. Click "Sign in with SSO" to authenticate.');
+    }
+
+    async function startSSOLogin() {
+      const url = document.getElementById('input-url').value.trim().replace(/\/$/, '')
+        || getConfig().url;
+      if (!url) { alert('Please enter your Jira base URL first.'); return; }
+      localStorage.setItem('jira_url', url);
+
+      const btn = document.getElementById('sso-login-btn');
+      const icon = document.getElementById('sso-btn-icon');
+      btn.disabled = true;
+      icon.textContent = '⟳';
+      setSSOStatus('pending', 'Opening login window…');
+
+      try {
+        await ipcRenderer.invoke('start-sso-login', url);
+        localStorage.setItem('jira_authenticated', 'true');
+        setSSOStatus('connected', '✓ Signed in successfully');
+        setTimeout(() => {
+          document.getElementById('setup-banner').classList.remove('visible');
+        }, 800);
+      } catch (err) {
+        if (err.message !== 'Login cancelled') {
+          setSSOStatus('error', 'Sign-in failed: ' + err.message);
+        } else {
+          setSSOStatus('', '');
+          document.getElementById('sso-status').style.display = 'none';
+        }
+      } finally {
+        btn.disabled = false;
+        icon.textContent = '🔑';
+      }
+    }
+
+    function setSSOStatus(type, msg) {
+      const el = document.getElementById('sso-status');
+      el.className = 'sso-status ' + type;
+      el.textContent = msg;
+      el.style.display = msg ? 'flex' : 'none';
+    }
+
+    function toggleSetup() {
+      const banner = document.getElementById('setup-banner');
+      document.getElementById('input-url').value = getConfig().url;
+      if (localStorage.getItem('jira_authenticated')) {
+        setSSOStatus('connected', '✓ Currently signed in. Re-authenticate to refresh your session.');
+      } else {
+        document.getElementById('sso-status').style.display = 'none';
+      }
+      banner.classList.toggle('visible');
+    }
+
+    function openExternal(url) {
+      shell.openExternal(url);
+    }
+
+    // ── Notifications toggle ──────────────────────────────────────────────────
+
+    function notificationsEnabled() {
+      return localStorage.getItem('notifications_enabled') !== 'false';
+    }
+
+    function initNotifToggle() {
+      document.getElementById('notif-toggle-track').classList.toggle('on', notificationsEnabled());
+    }
+
+    function toggleNotifications() {
+      const track = document.getElementById('notif-toggle-track');
+      const newVal = !track.classList.contains('on');
+      track.classList.toggle('on', newVal);
+      localStorage.setItem('notifications_enabled', newVal ? 'true' : 'false');
+    }
+
+    // ── Background polling ────────────────────────────────────────────────────
+
+    const POLL_INTERVAL_MS = 15 * 1000;
+    let seenCommentIds = null; // null = not yet initialised; populated after first fetch
+    let pollTimer = null;
+
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(silentPoll, POLL_INTERVAL_MS);
+    }
+
+    async function silentPoll() {
+      if (!isConfigured() || running) return;
+      try {
+        const hours = parseInt(document.getElementById('time-select').value, 10);
+        const data = await runComments(hours);
+
+        const incoming = new Set();
+        data.forEach(({ comments }) => comments.forEach(c => incoming.add(c.id)));
+
+        if (seenCommentIds !== null) {
+          const newItems = [];
+          data.forEach(({ issue, comments }) =>
+            comments.forEach(c => { if (!seenCommentIds.has(c.id)) newItems.push({ issue, comment: c }); })
+          );
+
+          if (newItems.length) {
+            if (selectedReport === 'comments') {
+              setResults(renderCommentsResult(data), data.reduce((n, d) => n + d.comments.length, 0));
+            }
+            if (notificationsEnabled()) {
+              const n = newItems.length;
+              const issueKeys = [...new Set(newItems.map(x => x.issue.key))];
+              ipcRenderer.send('notify', {
+                title: n === 1 ? 'New Jira Comment' : `${n} New Jira Comments`,
+                body: n === 1
+                  ? `${newItems[0].comment.author?.displayName || 'Someone'} commented on ${newItems[0].issue.key}`
+                  : `New activity on ${issueKeys.slice(0, 3).join(', ')}${issueKeys.length > 3 ? '…' : ''}`,
+              });
+            }
+          }
+        }
+
+        seenCommentIds = incoming;
+      } catch (_) {}
+    }
+
+    // ── Login item toggle ─────────────────────────────────────────────────────
+
+    async function initLoginToggle() {
+      const enabled = await ipcRenderer.invoke('get-login-item');
+      setToggleUI(enabled);
+    }
+
+    function setToggleUI(enabled) {
+      document.getElementById('login-toggle-track').classList.toggle('on', enabled);
+    }
+
+    async function toggleLoginItem() {
+      const track = document.getElementById('login-toggle-track');
+      const newVal = !track.classList.contains('on');
+      setToggleUI(newVal);
+      await ipcRenderer.invoke('set-login-item', newVal);
+    }
+
+    // ── Card selection ────────────────────────────────────────────────────────
+
+    let selectedReport = 'comments';
+
+    function selectCard(el) {
+      document.querySelectorAll('.report-card').forEach(c => c.classList.remove('selected'));
+      el.classList.add('selected');
+      selectedReport = el.dataset.report;
+      runReport();
+    }
+
+    // ── Jira API ──────────────────────────────────────────────────────────────
+
+    async function jiraFetch(path) {
+      const { url } = getConfig();
+      const result = await ipcRenderer.invoke('jira-fetch', { url, path });
+      if (result.status === 401 || result.status === 403) {
+        localStorage.removeItem('jira_authenticated');
+        document.getElementById('input-url').value = url;
+        setSSOStatus('error', 'Session expired. Please sign in again.');
+        document.getElementById('setup-banner').classList.add('visible');
+        throw new Error('Session expired — please sign in again via SSO.');
+      }
+      if (!result.ok) {
+        throw new Error(`Jira API error ${result.status}: ${result.body.slice(0, 200)}`);
+      }
+      return JSON.parse(result.body);
+    }
+
+    async function searchIssues(jql, fields = 'summary,status,priority,duedate', maxResults = 50) {
+      const params = new URLSearchParams({ jql, fields, maxResults });
+      const data = await jiraFetch(`/rest/api/3/search/jql?${params}`);
+      return data.issues || [];
+    }
+
+    // ── Report runners ────────────────────────────────────────────────────────
+
+    function hoursAgo(h) {
+      return new Date(Date.now() - h * 3600 * 1000);
+    }
+
+    async function runComments(hours) {
+      const cutoff = hoursAgo(hours);
+
+      const [myself, relevantIssues, recentIssues] = await Promise.all([
+        jiraFetch('/rest/api/3/myself'),
+        searchIssues(
+          'assignee = currentUser() OR watcher = currentUser() OR reporter = currentUser() ORDER BY updated DESC',
+          'summary,status,priority,parent',
+          200
+        ),
+        // Recently updated issues in the window — to catch tickets I've commented on
+        // even if I'm not assigned, watching, or tagged
+        searchIssues(
+          `updated >= -${hours}h ORDER BY updated DESC`,
+          'summary,status,priority',
+          150
+        ),
+      ]);
+
+      const myAccountId = myself.accountId;
+
+      // Merge, deduplicate by key
+      const relevantKeys = new Set(relevantIssues.map(i => i.key));
+      const allIssues = [...relevantIssues];
+      for (const issue of recentIssues) {
+        if (!relevantKeys.has(issue.key)) allIssues.push(issue);
+      }
+
+      // Add parent tickets of relevant issues
+      const seenKeys = new Set(allIssues.map(i => i.key));
+      const parentKeys = [...new Set(
+        relevantIssues.map(i => i.fields.parent?.key).filter(k => k && !seenKeys.has(k))
+      )];
+      if (parentKeys.length) {
+        const parentIssues = await searchIssues(
+          `issueKey in (${parentKeys.join(',')})`,
+          'summary,status,priority',
+          parentKeys.length
+        );
+        for (const p of parentIssues) {
+          if (!seenKeys.has(p.key)) allIssues.push(p);
+        }
+      }
+
+      const results = [];
+      await Promise.all(allIssues.map(async issue => {
+        try {
+          const data = await jiraFetch(`/rest/api/3/issue/${issue.key}/comment?orderBy=-created&maxResults=50`);
+          const allComments = data.comments || [];
+          const recent = allComments.filter(c => new Date(c.created) >= cutoff);
+          if (!recent.length) return;
+
+          // For issues outside the assigned/watching/reported set, only include
+          // if the current user has commented on the issue at some point
+          const iCommented = allComments.some(c => c.author?.accountId === myAccountId);
+          if (relevantKeys.has(issue.key) || iCommented) {
+            results.push({ issue, comments: recent });
+          }
+        } catch (_) { /* skip issues we can't read */ }
+      }));
+
+      return results;
+    }
+
+    async function runOpen() {
+      return searchIssues('assignee=currentUser() AND statusCategory != Done ORDER BY updated DESC');
+    }
+
+    async function runHighPriority() {
+      return searchIssues('assignee=currentUser() AND priority in (Highest, High) AND statusCategory != Done ORDER BY priority ASC, updated DESC');
+    }
+
+    async function runRecentlyUpdated(hours) {
+      return searchIssues(`assignee=currentUser() AND updated >= -${hours}h ORDER BY updated DESC`);
+    }
+
+    async function runOverdue() {
+      return searchIssues('assignee=currentUser() AND due < now() AND statusCategory != Done ORDER BY duedate ASC', 'summary,status,priority,duedate');
+    }
+
+    async function runBlocked() {
+      return searchIssues('assignee=currentUser() AND (labels = blocked OR status = Blocked) AND statusCategory != Done ORDER BY updated DESC');
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────────
+
+    function timeAgo(dateStr) {
+      const diff = Date.now() - new Date(dateStr).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return 'just now';
+      if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ago`;
+      const d = Math.floor(h / 24);
+      return `${d}d ago`;
+    }
+
+    function daysOverdue(dueDateStr) {
+      const diff = Date.now() - new Date(dueDateStr).getTime();
+      return Math.floor(diff / 86400000);
+    }
+
+    function priorityClass(priority) {
+      const p = (priority || '').toLowerCase();
+      if (p === 'highest') return 'highest';
+      if (p === 'high') return 'high';
+      return '';
+    }
+
+    function renderIssueKey(key) {
+      const { url } = getConfig();
+      return `<a class="issue-key" href="#" onclick="openExternal('${url}/browse/${key}'); return false;">${key}</a>`;
+    }
+
+    function renderBadge(text, cls = '') {
+      return `<span class="badge ${cls}">${escHtml(text)}</span>`;
+    }
+
+    function escHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function extractCommentText(body) {
+      if (!body) return '';
+      if (typeof body === 'string') return body;
+      // ADF (Atlassian Document Format) — extract text nodes
+      const texts = [];
+      function walk(node) {
+        if (!node) return;
+        if (node.type === 'text') texts.push(node.text || '');
+        if (node.content) node.content.forEach(walk);
+      }
+      walk(body);
+      return texts.join('');
+    }
+
+    function renderCommentsResult(data) {
+      if (!data.length) return emptyState('No recent comments on your issues');
+
+      return data.map(({ issue, comments }) => {
+        const f = issue.fields;
+        const commentsHtml = comments.map(c => {
+          const author = c.author?.displayName || 'Unknown';
+          const text = extractCommentText(c.body);
+          return `
+            <div class="comment-item">
+              <div class="comment-author">${escHtml(author)} · ${timeAgo(c.created)}</div>
+              <div class="comment-body">${escHtml(text.slice(0, 400))}${text.length > 400 ? '…' : ''}</div>
+            </div>`;
+        }).join('');
+
+        return `
+          <div class="issue-item">
+            <div class="issue-meta">
+              ${renderIssueKey(issue.key)}
+              ${renderBadge(f.status?.name || '—')}
+              ${f.priority?.name ? renderBadge(f.priority.name, priorityClass(f.priority.name)) : ''}
+            </div>
+            <div class="issue-title">${escHtml(f.summary)}</div>
+            <div class="comment-list">${commentsHtml}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderIssueList(issues, extraFn) {
+      if (!issues.length) return emptyState('No issues found');
+
+      return issues.map(issue => {
+        const f = issue.fields;
+        const extra = extraFn ? extraFn(f) : '';
+        return `
+          <div class="issue-item">
+            <div class="issue-meta">
+              ${renderIssueKey(issue.key)}
+              ${renderBadge(f.status?.name || '—')}
+              ${f.priority?.name ? renderBadge(f.priority.name, priorityClass(f.priority.name)) : ''}
+            </div>
+            <div class="issue-title">${escHtml(f.summary)}</div>
+            ${extra}
+          </div>`;
+      }).join('');
+    }
+
+    function emptyState(msg) {
+      return `<div class="state-empty"><div class="icon">📭</div>${escHtml(msg)}</div>`;
+    }
+
+    function loadingState() {
+      return `<div class="state-loading"><div class="spinner"></div>Fetching from Jira…</div>`;
+    }
+
+    function errorState(msg) {
+      return `<div class="state-error">⚠ ${escHtml(msg)}</div>`;
+    }
+
+    const REPORT_LABELS = {
+      comments: 'Recent Comments',
+      open: 'Open Tickets',
+      'high-priority': 'High Priority',
+      'recently-updated': 'Recently Updated',
+      overdue: 'Overdue Issues',
+      blocked: 'Blocked Issues',
+    };
+
+    function setResults(html, count) {
+      const countHtml = count != null ? `<span id="results-count">${count} issue${count !== 1 ? 's' : ''}</span>` : '';
+      document.getElementById('results').innerHTML = `
+        <div id="results-header">
+          <span id="results-title">${escHtml(REPORT_LABELS[selectedReport] || '')}</span>
+          ${countHtml}
+        </div>
+        <div class="issue-list">${html}</div>`;
+    }
+
+    // ── Main run ──────────────────────────────────────────────────────────────
+
+    let running = false;
+
+    async function runReport() {
+      if (!isConfigured()) {
+        document.getElementById('setup-banner').classList.add('visible');
+        document.getElementById('input-url').value = getConfig().url;
+        return;
+      }
+
+      if (running) return;
+      running = true;
+
+      const btn = document.getElementById('run-btn');
+      const btnLabel = document.getElementById('run-btn-label');
+      const btnIcon = document.getElementById('run-btn-icon');
+      btn.disabled = true;
+      btnLabel.textContent = 'Running…';
+      btnIcon.textContent = '⟳';
+
+      const hours = parseInt(document.getElementById('time-select').value, 10);
+      document.getElementById('results').innerHTML = `
+        <div id="results-header">
+          <span id="results-title">${escHtml(REPORT_LABELS[selectedReport] || '')}</span>
+        </div>
+        <div class="issue-list">${loadingState()}</div>`;
+
+      try {
+        let html = '';
+        let count = null;
+
+        if (selectedReport === 'comments') {
+          const data = await runComments(hours);
+          count = data.reduce((n, d) => n + d.comments.length, 0);
+          html = renderCommentsResult(data);
+          if (seenCommentIds === null) {
+            seenCommentIds = new Set();
+            data.forEach(({ comments }) => comments.forEach(c => seenCommentIds.add(c.id)));
+          }
+        } else if (selectedReport === 'open') {
+          const issues = await runOpen();
+          count = issues.length;
+          html = renderIssueList(issues);
+        } else if (selectedReport === 'high-priority') {
+          const issues = await runHighPriority();
+          count = issues.length;
+          html = renderIssueList(issues);
+        } else if (selectedReport === 'recently-updated') {
+          const issues = await runRecentlyUpdated(hours);
+          count = issues.length;
+          html = renderIssueList(issues);
+        } else if (selectedReport === 'overdue') {
+          const issues = await runOverdue();
+          count = issues.length;
+          html = renderIssueList(issues, f => {
+            if (!f.duedate) return '';
+            const days = daysOverdue(f.duedate);
+            return `<div class="issue-extra overdue">Due ${f.duedate} · ${days} day${days !== 1 ? 's' : ''} overdue</div>`;
+          });
+        } else if (selectedReport === 'blocked') {
+          const issues = await runBlocked();
+          count = issues.length;
+          html = renderIssueList(issues);
+        }
+
+        setResults(html, count);
+      } catch (err) {
+        setResults(errorState(err.message), null);
+      } finally {
+        running = false;
+        btn.disabled = false;
+        btnLabel.textContent = 'Run Report';
+        btnIcon.textContent = '▶';
+      }
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+
+    (function init() {
+      initLoginToggle();
+      initNotifToggle();
+      startPolling();
+      const { url } = getConfig();
+      document.getElementById('input-url').value = url;
+      if (!isConfigured()) {
+        document.getElementById('setup-banner').classList.add('visible');
+        if (url && !localStorage.getItem('jira_authenticated')) {
+          setSSOStatus('pending', 'URL saved. Click "Sign in with SSO" to authenticate.');
+        }
+      }
+      runReport();
+    })();
+  </script>
+</body>
+</html>

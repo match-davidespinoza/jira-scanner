@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jira Recent Comments</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f5f5f7;
+      --border: #e0e0e5;
+      --text: #1d1d1f;
+      --text2: #6e6e73;
+      --accent: #0071e3;
+      --success: #34c759;
+      --danger: #ff3b30;
+      --radius: 8px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1c1e;
+        --surface: #2c2c2e;
+        --border: #3a3a3c;
+        --text: #f5f5f7;
+        --text2: #98989d;
+        --accent: #0a84ff;
+      }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      -webkit-app-region: drag;
+    }
+
+    #header-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    #header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+
+    #time-select {
+      height: 24px;
+      padding: 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 11px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    #open-app-btn {
+      height: 24px;
+      padding: 0 10px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    #open-app-btn:hover { opacity: 0.85; }
+
+    #scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .comment-block {
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .issue-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      padding: 8px 10px 6px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .issue-key {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+
+    .issue-key:hover { text-decoration: underline; }
+
+    .issue-summary {
+      font-size: 11px;
+      color: var(--text2);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .comment-entry {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .comment-entry:last-child { border-bottom: none; }
+
+    .comment-meta {
+      font-size: 10px;
+      color: var(--text2);
+      margin-bottom: 3px;
+    }
+
+    .comment-text {
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text2);
+      font-size: 12px;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error { color: var(--danger); }
+  </style>
+</head>
+<body>
+
+  <div id="header">
+    <span id="header-title">Recent Comments</span>
+    <div id="header-right">
+      <select id="time-select">
+        <option value="6">6 h</option>
+        <option value="24" selected>24 h</option>
+        <option value="48">48 h</option>
+        <option value="168">7 d</option>
+      </select>
+      <button id="open-app-btn" onclick="openApp()">Open App</button>
+    </div>
+  </div>
+
+  <div id="scroll-area">
+    <div class="state"><div class="spinner"></div>Loading…</div>
+  </div>
+
+  <script>
+    const { ipcRenderer, shell } = require('electron');
+
+    function esc(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function timeAgo(dateStr) {
+      const m = Math.floor((Date.now() - new Date(dateStr)) / 60000);
+      if (m < 1) return 'just now';
+      if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ago`;
+      return `${Math.floor(h / 24)}d ago`;
+    }
+
+    function extractText(body) {
+      if (!body) return '';
+      if (typeof body === 'string') return body;
+      const parts = [];
+      function walk(n) {
+        if (!n) return;
+        if (n.type === 'text') parts.push(n.text || '');
+        if (n.content) n.content.forEach(walk);
+      }
+      walk(body);
+      return parts.join('');
+    }
+
+    const DEFAULT_JIRA_URL = 'https://e2p.atlassian.net';
+
+    async function jiraFetch(apiPath) {
+      const url = localStorage.getItem('jira_url') || DEFAULT_JIRA_URL;
+      const result = await ipcRenderer.invoke('jira-fetch', { url, path: apiPath });
+      if (!result.ok) throw new Error(`Jira ${result.status}`);
+      return JSON.parse(result.body);
+    }
+
+    async function fetchComments(hours) {
+      const cutoff = new Date(Date.now() - hours * 3600000);
+
+      const [myself, issues] = await Promise.all([
+        jiraFetch('/rest/api/3/myself'),
+        jiraFetch(`/rest/api/3/search/jql?${new URLSearchParams({
+          jql: 'assignee = currentUser() OR watcher = currentUser() OR reporter = currentUser() ORDER BY updated DESC',
+          fields: 'summary,parent',
+          maxResults: 100,
+        })}`).then(d => d.issues || []),
+      ]);
+
+      const myId = myself.accountId;
+      const results = [];
+
+      await Promise.all(issues.map(async issue => {
+        try {
+          const data = await jiraFetch(`/rest/api/3/issue/${issue.key}/comment?orderBy=-created&maxResults=20`);
+          const recent = (data.comments || []).filter(c => new Date(c.created) >= cutoff);
+          if (recent.length) results.push({ issue, comments: recent });
+        } catch (_) {}
+      }));
+
+      // Sort by most recent comment first
+      results.sort((a, b) =>
+        new Date(b.comments[0].created) - new Date(a.comments[0].created)
+      );
+
+      return results;
+    }
+
+    function render(data) {
+      const area = document.getElementById('scroll-area');
+      if (!data.length) {
+        area.innerHTML = '<div class="state">No recent comments</div>';
+        return;
+      }
+
+      const jiraUrl = localStorage.getItem('jira_url') || DEFAULT_JIRA_URL;
+      area.innerHTML = data.slice(0, 15).map(({ issue, comments }) => {
+        const commentsHtml = comments.slice(0, 3).map(c => {
+          const text = extractText(c.body);
+          return `
+            <div class="comment-entry">
+              <div class="comment-meta">${esc(c.author?.displayName || '?')} · ${timeAgo(c.created)}</div>
+              <div class="comment-text">${esc(text.slice(0, 200))}${text.length > 200 ? '…' : ''}</div>
+            </div>`;
+        }).join('');
+
+        const browseUrl = `${jiraUrl}/browse/${issue.key}`;
+        return `
+          <div class="comment-block">
+            <div class="issue-row">
+              <a class="issue-key" href="#" onclick="shell.openExternal('${esc(browseUrl)}'); return false;">${esc(issue.key)}</a>
+              <span class="issue-summary">${esc(issue.fields.summary)}</span>
+            </div>
+            ${commentsHtml}
+          </div>`;
+      }).join('');
+    }
+
+    async function load() {
+      const hours = parseInt(document.getElementById('time-select').value, 10);
+      document.getElementById('scroll-area').innerHTML =
+        '<div class="state"><div class="spinner"></div>Loading…</div>';
+      try {
+        const data = await fetchComments(hours);
+        render(data);
+      } catch (err) {
+        document.getElementById('scroll-area').innerHTML =
+          `<div class="state error">⚠ ${esc(err.message)}</div>`;
+      }
+    }
+
+    function openApp() {
+      ipcRenderer.invoke('open-main-window');
+    }
+
+    document.getElementById('time-select').addEventListener('change', load);
+    ipcRenderer.on('fetch-comments', load);
+  </script>
+</body>
+</html>
