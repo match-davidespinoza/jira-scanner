@@ -138,14 +138,18 @@
     .comment-entry {
       padding: 8px 10px;
       border-bottom: 1px solid var(--border);
+      position: relative;
     }
 
     .comment-entry:last-child { border-bottom: none; }
+
+    .comment-entry.seen { opacity: 0.45; }
 
     .comment-meta {
       font-size: 10px;
       color: var(--text2);
       margin-bottom: 3px;
+      padding-right: 22px;
     }
 
     .comment-text {
@@ -154,6 +158,37 @@
       color: var(--text);
       white-space: pre-wrap;
       word-break: break-word;
+    }
+
+    .seen-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1.5px solid var(--text2);
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      color: var(--text2);
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .seen-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .comment-entry.seen .seen-btn {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
     }
 
     .state {
@@ -200,6 +235,25 @@
   <script>
     const { ipcRenderer, shell } = require('electron');
 
+    const SEEN_KEY = 'seen_comment_ids';
+    function getSeenIds() { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }
+    function saveSeenIds(set) { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])); }
+
+    function toggleSeen(commentId, el) {
+      const seen = getSeenIds();
+      const entry = el.closest('.comment-entry');
+      const nowSeen = !seen.has(commentId);
+      if (nowSeen) {
+        seen.add(commentId);
+        entry.classList.add('seen');
+      } else {
+        seen.delete(commentId);
+        entry.classList.remove('seen');
+      }
+      saveSeenIds(seen);
+      ipcRenderer.send('seen-updated', commentId, nowSeen);
+    }
+
     function esc(str) {
       return String(str || '')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -228,39 +282,29 @@
       return parts.join('');
     }
 
-    const DEFAULT_JIRA_URL = 'https://e2p.atlassian.net';
-
-    async function jiraFetch(apiPath) {
-      const url = localStorage.getItem('jira_url') || DEFAULT_JIRA_URL;
-      const result = await ipcRenderer.invoke('jira-fetch', { url, path: apiPath });
-      if (!result.ok) throw new Error(`Jira ${result.status}`);
-      return JSON.parse(result.body);
-    }
-
     async function fetchComments(hours) {
       const cutoff = new Date(Date.now() - hours * 3600000);
 
-      const [myself, issues] = await Promise.all([
-        jiraFetch('/rest/api/3/myself'),
-        jiraFetch(`/rest/api/3/search/jql?${new URLSearchParams({
-          jql: 'assignee = currentUser() OR watcher = currentUser() OR reporter = currentUser() ORDER BY updated DESC',
-          fields: 'summary,parent',
-          maxResults: 100,
-        })}`).then(d => d.issues || []),
-      ]);
+      const searchResult = await ipcRenderer.invoke('acli-search', {
+        jql: 'assignee = currentUser() OR watcher = currentUser() OR reporter = currentUser() ORDER BY updated DESC',
+        fields: 'summary,parent',
+        limit: 100,
+      });
+      if (!searchResult.ok) throw new Error(searchResult.error || 'acli error');
+      const issues = JSON.parse(searchResult.body);
 
-      const myId = myself.accountId;
       const results = [];
 
       await Promise.all(issues.map(async issue => {
         try {
-          const data = await jiraFetch(`/rest/api/3/issue/${issue.key}/comment?orderBy=-created&maxResults=20`);
-          const recent = (data.comments || []).filter(c => new Date(c.created) >= cutoff);
+          const viewResult = await ipcRenderer.invoke('acli-view', { key: issue.key, fields: 'summary,comment' });
+          if (!viewResult.ok) return;
+          const data = JSON.parse(viewResult.body);
+          const recent = (data.fields?.comment?.comments || []).filter(c => new Date(c.created) >= cutoff);
           if (recent.length) results.push({ issue, comments: recent });
         } catch (_) {}
       }));
 
-      // Sort by most recent comment first
       results.sort((a, b) =>
         new Date(b.comments[0].created) - new Date(a.comments[0].created)
       );
@@ -275,18 +319,20 @@
         return;
       }
 
-      const jiraUrl = localStorage.getItem('jira_url') || DEFAULT_JIRA_URL;
+      const seenIds = getSeenIds();
       area.innerHTML = data.slice(0, 15).map(({ issue, comments }) => {
         const commentsHtml = comments.slice(0, 3).map(c => {
           const text = extractText(c.body);
+          const isSeen = seenIds.has(c.id);
           return `
-            <div class="comment-entry">
+            <div class="comment-entry${isSeen ? ' seen' : ''}">
+              <button class="seen-btn" onclick="toggleSeen('${esc(c.id)}', this)" title="${isSeen ? 'Mark unseen' : 'Mark as seen'}">✓</button>
               <div class="comment-meta">${esc(c.author?.displayName || '?')} · ${timeAgo(c.created)}</div>
               <div class="comment-text">${esc(text.slice(0, 200))}${text.length > 200 ? '…' : ''}</div>
             </div>`;
         }).join('');
 
-        const browseUrl = `${jiraUrl}/browse/${issue.key}`;
+        const browseUrl = `${jiraSiteUrl}/browse/${issue.key}`;
         return `
           <div class="comment-block">
             <div class="issue-row">
@@ -298,7 +344,12 @@
       }).join('');
     }
 
+    let jiraSiteUrl = 'https://e2p.atlassian.net';
+
     async function load() {
+      const config = await ipcRenderer.invoke('acli-get-config');
+      if (config.ok) jiraSiteUrl = 'https://' + config.site;
+
       const hours = parseInt(document.getElementById('time-select').value, 10);
       document.getElementById('scroll-area').innerHTML =
         '<div class="state"><div class="spinner"></div>Loading…</div>';

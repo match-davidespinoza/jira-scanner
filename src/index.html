@@ -167,38 +167,6 @@
 
     #setup-save:hover { background: var(--accent-hover); }
 
-    #sso-login-btn {
-      height: 36px;
-      padding: 0 20px;
-      background: var(--accent);
-      color: white;
-      border: none;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 0.15s, opacity 0.15s;
-      -webkit-app-region: no-drag;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    #sso-login-btn:hover { background: var(--accent-hover); }
-    #sso-login-btn:disabled { opacity: 0.5; cursor: default; }
-
-    #sso-status {
-      margin-top: 12px;
-      font-size: 12px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    #sso-status.connected { color: var(--success); }
-    #sso-status.error { color: var(--danger); }
-    #sso-status.pending { color: var(--text2); }
 
     /* Main content */
     #main {
@@ -239,7 +207,7 @@
     }
 
     #run-btn {
-      height: 32px;
+      height: 36px;
       padding: 0 18px;
       background: var(--accent);
       color: white;
@@ -257,6 +225,7 @@
 
     #run-btn:hover { background: var(--accent-hover); }
     #run-btn:disabled { opacity: 0.5; cursor: default; }
+    #run-btn-icon { font-size: 25px; line-height: 1; position: relative; top: -2px; }
 
     #settings-btn {
       height: 32px;
@@ -467,13 +436,18 @@
       background: var(--surface2);
       border-radius: 6px;
       padding: 8px 10px;
+      position: relative;
+      transition: opacity 0.2s;
     }
+
+    .comment-item.seen { opacity: 0.4; }
 
     .comment-author {
       font-size: 11px;
       font-weight: 600;
       color: var(--text2);
       margin-bottom: 3px;
+      padding-right: 24px;
     }
 
     .comment-body {
@@ -482,6 +456,37 @@
       color: var(--text);
       white-space: pre-wrap;
       word-break: break-word;
+    }
+
+    .seen-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1.5px solid var(--text2);
+      background: transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: var(--text2);
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .seen-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .comment-item.seen .seen-btn {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
     }
 
     /* States */
@@ -521,19 +526,11 @@
 
   <div id="setup-banner">
     <h2>Connect to Jira</h2>
-    <p>Enter your Jira URL and sign in with your company SSO (Okta).</p>
+    <p>Authenticate using the Atlassian CLI. Run <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11px">acli jira auth</code> in your terminal, then click "Check Auth".</p>
     <div class="setup-fields">
-      <div class="setup-field">
-        <label>Jira Base URL</label>
-        <input type="url" id="input-url" placeholder="https://yourcompany.atlassian.net" />
-      </div>
-      <button id="setup-save" onclick="saveUrl()">Save URL</button>
-      <button id="sso-login-btn" onclick="startSSOLogin()">
-        <span id="sso-btn-icon">🔑</span>
-        Sign in with SSO
-      </button>
+      <button id="check-auth-btn" onclick="recheckAuth()" style="height:32px;padding:0 16px;background:var(--accent);color:white;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;-webkit-app-region:no-drag">Check Auth</button>
     </div>
-    <div id="sso-status" style="display:none"></div>
+    <div id="auth-status" style="display:none;margin-top:12px;font-size:12px"></div>
   </div>
 
   <div id="main">
@@ -561,8 +558,8 @@
       </label>
       <button id="settings-btn" onclick="toggleSetup()" title="Settings">⚙</button>
       <button id="run-btn" onclick="runReport()">
-        <span id="run-btn-icon">▶</span>
-        <span id="run-btn-label">Run Report</span>
+        <span id="run-btn-icon">⟳</span>
+        <span id="run-btn-label">Refresh Report</span>
       </button>
     </div>
 
@@ -605,75 +602,63 @@
   <script>
     const { shell, ipcRenderer } = require('electron');
 
-    // ── Persistence ──────────────────────────────────────────────────────────
+    // ── Seen comments ─────────────────────────────────────────────────────────
 
-    const DEFAULT_JIRA_URL = 'https://e2p.atlassian.net';
+    const SEEN_KEY = 'seen_comment_ids';
+    function getSeenIds() { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }
+    function saveSeenIds(set) { localStorage.setItem(SEEN_KEY, JSON.stringify([...set])); }
 
-    function getConfig() {
-      return {
-        url: (localStorage.getItem('jira_url') || DEFAULT_JIRA_URL).replace(/\/$/, ''),
-      };
-    }
-
-    function isConfigured() {
-      return !!(getConfig().url && localStorage.getItem('jira_authenticated'));
-    }
-
-    function saveUrl() {
-      const url = document.getElementById('input-url').value.trim().replace(/\/$/, '');
-      if (!url) { alert('Please enter your Jira base URL.'); return; }
-      localStorage.setItem('jira_url', url);
-      setSSOStatus('pending', 'URL saved. Click "Sign in with SSO" to authenticate.');
-    }
-
-    async function startSSOLogin() {
-      const url = document.getElementById('input-url').value.trim().replace(/\/$/, '')
-        || getConfig().url;
-      if (!url) { alert('Please enter your Jira base URL first.'); return; }
-      localStorage.setItem('jira_url', url);
-
-      const btn = document.getElementById('sso-login-btn');
-      const icon = document.getElementById('sso-btn-icon');
-      btn.disabled = true;
-      icon.textContent = '⟳';
-      setSSOStatus('pending', 'Opening login window…');
-
-      try {
-        await ipcRenderer.invoke('start-sso-login', url);
-        localStorage.setItem('jira_authenticated', 'true');
-        setSSOStatus('connected', '✓ Signed in successfully');
-        setTimeout(() => {
-          document.getElementById('setup-banner').classList.remove('visible');
-        }, 800);
-      } catch (err) {
-        if (err.message !== 'Login cancelled') {
-          setSSOStatus('error', 'Sign-in failed: ' + err.message);
-        } else {
-          setSSOStatus('', '');
-          document.getElementById('sso-status').style.display = 'none';
-        }
-      } finally {
-        btn.disabled = false;
-        icon.textContent = '🔑';
+    function toggleSeen(commentId, el) {
+      const seen = getSeenIds();
+      const item = el.closest('.comment-item');
+      if (seen.has(commentId)) {
+        seen.delete(commentId);
+        item.classList.remove('seen');
+        el.title = 'Mark as seen';
+      } else {
+        seen.add(commentId);
+        item.classList.add('seen');
+        el.title = 'Mark unseen';
       }
+      saveSeenIds(seen);
     }
 
-    function setSSOStatus(type, msg) {
-      const el = document.getElementById('sso-status');
-      el.className = 'sso-status ' + type;
+    // ── Auth / config ─────────────────────────────────────────────────────────
+
+    let acliAuthenticated = false;
+    let jiraSiteUrl = 'https://e2p.atlassian.net';
+    let myAccountId = null;
+
+    function isConfigured() { return acliAuthenticated; }
+
+    function setAuthStatus(type, msg) {
+      const el = document.getElementById('auth-status');
+      el.style.display = msg ? 'block' : 'none';
+      el.style.color = type === 'error' ? 'var(--danger)' : type === 'ok' ? 'var(--success)' : 'var(--text2)';
       el.textContent = msg;
-      el.style.display = msg ? 'flex' : 'none';
+    }
+
+    async function recheckAuth() {
+      const btn = document.getElementById('check-auth-btn');
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      setAuthStatus('pending', 'Checking authentication…');
+      const result = await ipcRenderer.invoke('acli-check-auth');
+      btn.disabled = false;
+      btn.textContent = 'Check Auth';
+      if (result.ok) {
+        acliAuthenticated = true;
+        setAuthStatus('ok', '✓ Authenticated');
+        setTimeout(() => document.getElementById('setup-banner').classList.remove('visible'), 600);
+        runReport();
+        startPolling();
+      } else {
+        setAuthStatus('error', 'Not authenticated. Run `acli jira auth` in your terminal.');
+      }
     }
 
     function toggleSetup() {
-      const banner = document.getElementById('setup-banner');
-      document.getElementById('input-url').value = getConfig().url;
-      if (localStorage.getItem('jira_authenticated')) {
-        setSSOStatus('connected', '✓ Currently signed in. Re-authenticate to refresh your session.');
-      } else {
-        document.getElementById('sso-status').style.display = 'none';
-      }
-      banner.classList.toggle('visible');
+      document.getElementById('setup-banner').classList.toggle('visible');
     }
 
     function openExternal(url) {
@@ -699,7 +684,7 @@
 
     // ── Background polling ────────────────────────────────────────────────────
 
-    const POLL_INTERVAL_MS = 15 * 1000;
+    const POLL_INTERVAL_MS = 60 * 1000;
     let seenCommentIds = null; // null = not yet initialised; populated after first fetch
     let pollTimer = null;
 
@@ -773,28 +758,27 @@
       runReport();
     }
 
-    // ── Jira API ──────────────────────────────────────────────────────────────
+    // ── Jira API (via acli) ───────────────────────────────────────────────────
 
-    async function jiraFetch(path) {
-      const { url } = getConfig();
-      const result = await ipcRenderer.invoke('jira-fetch', { url, path });
-      if (result.status === 401 || result.status === 403) {
-        localStorage.removeItem('jira_authenticated');
-        document.getElementById('input-url').value = url;
-        setSSOStatus('error', 'Session expired. Please sign in again.');
-        document.getElementById('setup-banner').classList.add('visible');
-        throw new Error('Session expired — please sign in again via SSO.');
-      }
+    async function acliSearch(jql, fields, limit) {
+      const result = await ipcRenderer.invoke('acli-search', { jql, fields, limit });
       if (!result.ok) {
-        throw new Error(`Jira API error ${result.status}: ${result.body.slice(0, 200)}`);
+        const err = new Error(result.error || 'acli error');
+        if (/network|connect|offline/i.test(result.error || '')) err.isNetworkError = true;
+        throw err;
       }
+      const data = JSON.parse(result.body);
+      return Array.isArray(data) ? data : (data.issues || []);
+    }
+
+    async function acliView(key, fields) {
+      const result = await ipcRenderer.invoke('acli-view', { key, fields });
+      if (!result.ok) throw new Error(result.error || 'acli error');
       return JSON.parse(result.body);
     }
 
-    async function searchIssues(jql, fields = 'summary,status,priority,duedate', maxResults = 50) {
-      const params = new URLSearchParams({ jql, fields, maxResults });
-      const data = await jiraFetch(`/rest/api/3/search/jql?${params}`);
-      return data.issues || [];
+    async function searchIssues(jql, maxResults = 50) {
+      return acliSearch(jql, null, maxResults);
     }
 
     // ── Report runners ────────────────────────────────────────────────────────
@@ -806,23 +790,16 @@
     async function runComments(hours) {
       const cutoff = hoursAgo(hours);
 
-      const [myself, relevantIssues, recentIssues] = await Promise.all([
-        jiraFetch('/rest/api/3/myself'),
+      const [relevantIssues, recentIssues] = await Promise.all([
         searchIssues(
           'assignee = currentUser() OR watcher = currentUser() OR reporter = currentUser() ORDER BY updated DESC',
-          'summary,status,priority,parent',
           200
         ),
-        // Recently updated issues in the window — to catch tickets I've commented on
-        // even if I'm not assigned, watching, or tagged
         searchIssues(
           `updated >= -${hours}h ORDER BY updated DESC`,
-          'summary,status,priority',
           150
         ),
       ]);
-
-      const myAccountId = myself.accountId;
 
       // Merge, deduplicate by key
       const relevantKeys = new Set(relevantIssues.map(i => i.key));
@@ -831,32 +808,14 @@
         if (!relevantKeys.has(issue.key)) allIssues.push(issue);
       }
 
-      // Add parent tickets of relevant issues
-      const seenKeys = new Set(allIssues.map(i => i.key));
-      const parentKeys = [...new Set(
-        relevantIssues.map(i => i.fields.parent?.key).filter(k => k && !seenKeys.has(k))
-      )];
-      if (parentKeys.length) {
-        const parentIssues = await searchIssues(
-          `issueKey in (${parentKeys.join(',')})`,
-          'summary,status,priority',
-          parentKeys.length
-        );
-        for (const p of parentIssues) {
-          if (!seenKeys.has(p.key)) allIssues.push(p);
-        }
-      }
-
       const results = [];
       await Promise.all(allIssues.map(async issue => {
         try {
-          const data = await jiraFetch(`/rest/api/3/issue/${issue.key}/comment?orderBy=-created&maxResults=50`);
-          const allComments = data.comments || [];
+          const data = await acliView(issue.key, 'summary,comment');
+          const allComments = data.fields?.comment?.comments || [];
           const recent = allComments.filter(c => new Date(c.created) >= cutoff);
           if (!recent.length) return;
 
-          // For issues outside the assigned/watching/reported set, only include
-          // if the current user has commented on the issue at some point
           const iCommented = allComments.some(c => c.author?.accountId === myAccountId);
           if (relevantKeys.has(issue.key) || iCommented) {
             results.push({ issue, comments: recent });
@@ -880,7 +839,7 @@
     }
 
     async function runOverdue() {
-      return searchIssues('assignee=currentUser() AND due < now() AND statusCategory != Done ORDER BY duedate ASC', 'summary,status,priority,duedate');
+      return searchIssues('assignee=currentUser() AND due < now() AND statusCategory != Done ORDER BY updated DESC');
     }
 
     async function runBlocked() {
@@ -900,11 +859,6 @@
       return `${d}d ago`;
     }
 
-    function daysOverdue(dueDateStr) {
-      const diff = Date.now() - new Date(dueDateStr).getTime();
-      return Math.floor(diff / 86400000);
-    }
-
     function priorityClass(priority) {
       const p = (priority || '').toLowerCase();
       if (p === 'highest') return 'highest';
@@ -913,8 +867,7 @@
     }
 
     function renderIssueKey(key) {
-      const { url } = getConfig();
-      return `<a class="issue-key" href="#" onclick="openExternal('${url}/browse/${key}'); return false;">${key}</a>`;
+      return `<a class="issue-key" href="#" onclick="openExternal('${jiraSiteUrl}/browse/${key}'); return false;">${key}</a>`;
     }
 
     function renderBadge(text, cls = '') {
@@ -946,13 +899,16 @@
     function renderCommentsResult(data) {
       if (!data.length) return emptyState('No recent comments on your issues');
 
+      const seenIds = getSeenIds();
       return data.map(({ issue, comments }) => {
         const f = issue.fields;
         const commentsHtml = comments.map(c => {
           const author = c.author?.displayName || 'Unknown';
           const text = extractCommentText(c.body);
+          const isSeen = seenIds.has(c.id);
           return `
-            <div class="comment-item">
+            <div class="comment-item${isSeen ? ' seen' : ''}">
+              <button class="seen-btn" onclick="toggleSeen('${escHtml(c.id)}', this)" title="${isSeen ? 'Mark unseen' : 'Mark as seen'}">✓</button>
               <div class="comment-author">${escHtml(author)} · ${timeAgo(c.created)}</div>
               <div class="comment-body">${escHtml(text.slice(0, 400))}${text.length > 400 ? '…' : ''}</div>
             </div>`;
@@ -1002,6 +958,28 @@
       return `<div class="state-error">⚠ ${escHtml(msg)}</div>`;
     }
 
+    function offlineState() {
+      return `<div class="state-empty"><div class="icon">🌐</div>Waiting for internet connection…</div>`;
+    }
+
+    let waitingForOnline = false;
+    let offlinePollTimer = null;
+
+    function waitForOnline() {
+      if (waitingForOnline) return;
+      waitingForOnline = true;
+      window.addEventListener('online', handleOnline);
+      offlinePollTimer = setInterval(handleOnline, 5000);
+    }
+
+    function handleOnline() {
+      waitingForOnline = false;
+      window.removeEventListener('online', handleOnline);
+      clearInterval(offlinePollTimer);
+      offlinePollTimer = null;
+      runReport();
+    }
+
     const REPORT_LABELS = {
       comments: 'Recent Comments',
       open: 'Open Tickets',
@@ -1028,7 +1006,6 @@
     async function runReport() {
       if (!isConfigured()) {
         document.getElementById('setup-banner').classList.add('visible');
-        document.getElementById('input-url').value = getConfig().url;
         return;
       }
 
@@ -1076,11 +1053,7 @@
         } else if (selectedReport === 'overdue') {
           const issues = await runOverdue();
           count = issues.length;
-          html = renderIssueList(issues, f => {
-            if (!f.duedate) return '';
-            const days = daysOverdue(f.duedate);
-            return `<div class="issue-extra overdue">Due ${f.duedate} · ${days} day${days !== 1 ? 's' : ''} overdue</div>`;
-          });
+          html = renderIssueList(issues);
         } else if (selectedReport === 'blocked') {
           const issues = await runBlocked();
           count = issues.length;
@@ -1089,30 +1062,56 @@
 
         setResults(html, count);
       } catch (err) {
-        setResults(errorState(err.message), null);
+        if (err.isNetworkError) {
+          setResults(offlineState(), null);
+          waitForOnline();
+        } else {
+          setResults(errorState(err.message), null);
+        }
       } finally {
         running = false;
         btn.disabled = false;
-        btnLabel.textContent = 'Run Report';
-        btnIcon.textContent = '▶';
+        btnLabel.textContent = 'Refresh Report';
+        btnIcon.textContent = '⟳';
       }
     }
 
+    ipcRenderer.on('seen-updated', (_event, commentId, isSeen) => {
+      const seen = getSeenIds();
+      if (isSeen) seen.add(commentId); else seen.delete(commentId);
+      saveSeenIds(seen);
+      const btn = document.querySelector(`.seen-btn[onclick*="${commentId}"]`);
+      if (btn) {
+        const item = btn.closest('.comment-item');
+        item.classList.toggle('seen', isSeen);
+        btn.title = isSeen ? 'Mark unseen' : 'Mark as seen';
+      }
+    });
+
     // ── Init ──────────────────────────────────────────────────────────────────
 
-    (function init() {
+    (async function init() {
       initLoginToggle();
       initNotifToggle();
-      startPolling();
-      const { url } = getConfig();
-      document.getElementById('input-url').value = url;
-      if (!isConfigured()) {
+
+      const config = await ipcRenderer.invoke('acli-get-config');
+      if (config.ok) {
+        jiraSiteUrl = 'https://' + config.site;
+        myAccountId = config.accountId;
+        acliAuthenticated = true;
+      } else {
         document.getElementById('setup-banner').classList.add('visible');
-        if (url && !localStorage.getItem('jira_authenticated')) {
-          setSSOStatus('pending', 'URL saved. Click "Sign in with SSO" to authenticate.');
-        }
+        setAuthStatus('error', 'Run `acli jira auth` in your terminal to authenticate.');
+        return;
       }
-      runReport();
+
+      startPolling();
+      if (!navigator.onLine) {
+        setResults(offlineState(), null);
+        waitForOnline();
+      } else {
+        runReport();
+      }
     })();
   </script>
 </body>

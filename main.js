@@ -1,10 +1,24 @@
-const { app, BrowserWindow, shell, ipcMain, session, Tray, nativeImage, Notification } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, Tray, nativeImage, Notification, nativeTheme, screen } = require('electron');
+const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 let tray = null;
 let trayWindow = null;
+let backdropWindow = null;
+let trayPopupShownAt = 0;
 
-const SSO_PARTITION = 'persist:jira-sso';
+const ACLI_BIN = '/opt/homebrew/bin/acli';
+
+function runAcli(args) {
+  return new Promise((resolve, reject) => {
+    execFile(ACLI_BIN, args, { maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(stderr.trim() || err.message));
+      else resolve(stdout);
+    });
+  });
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -34,77 +48,55 @@ ipcMain.handle('set-login-item', (_event, enable) => {
   app.setLoginItemSettings({ openAtLogin: enable });
 });
 
-// Proxy all Jira API calls through the main process so the SSO session's
-// cookies are sent automatically — fetch() in the renderer can't set Cookie headers.
-ipcMain.handle('jira-fetch', async (_event, { url, path: apiPath }) => {
-  const ssoSession = session.fromPartition(SSO_PARTITION);
+ipcMain.handle('acli-get-config', () => {
   try {
-    const res = await ssoSession.fetch(url + apiPath, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-Atlassian-Token': 'no-check',
-      },
-    });
-    const body = await res.text();
-    return { ok: res.ok, status: res.status, body };
+    const configPath = path.join(os.homedir(), '.config', 'acli', 'jira_config.yaml');
+    const content = fs.readFileSync(configPath, 'utf8');
+    const site = (content.match(/- site: (.+)/) || [])[1]?.trim();
+    const accountId = (content.match(/account_id: (.+)/) || [])[1]?.trim();
+    const displayName = (content.match(/display_name: (.+)/) || [])[1]?.trim();
+    return { ok: !!(site && accountId), site: site || '', accountId: accountId || '', displayName: displayName || '' };
   } catch (err) {
-    return { ok: false, status: 0, body: err.message };
+    return { ok: false, error: err.message };
   }
 });
 
-// Opens a sandboxed login window, completes the Okta SSO flow.
-// Resolves once session cookies are detected — no need to return them
-// since they live in the SSO session and jira-fetch uses them directly.
-ipcMain.handle('start-sso-login', async (_event, jiraUrl) => {
-  return new Promise((resolve, reject) => {
-    const loginWin = new BrowserWindow({
-      width: 820,
-      height: 700,
-      title: 'Sign in to Jira',
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        partition: SSO_PARTITION,
-      },
-    });
-
-    loginWin.webContents.session.setCertificateVerifyProc((_req, callback) => callback(0));
-    loginWin.loadURL(jiraUrl);
-
-    const jiraHost = new URL(jiraUrl).hostname;
-    let resolved = false;
-
-    async function tryResolve() {
-      if (resolved) return;
-      const cookies = await loginWin.webContents.session.cookies.get({ domain: jiraHost });
-      const hasSession = cookies.some(c =>
-        c.name.includes('session') || c.name.includes('token') || c.name === 'JSESSIONID'
-      );
-      if (!hasSession) return;
-      resolved = true;
-      resolve(true);
-      loginWin.destroy();
-    }
-
-    loginWin.webContents.session.cookies.on('changed', (_e, cookie, _cause, removed) => {
-      if (removed) return;
-      if (cookie.domain.includes(jiraHost.replace(/^[^.]+/, ''))) tryResolve();
-    });
-
-    loginWin.webContents.on('did-navigate', (_e, url) => {
-      try { if (new URL(url).hostname === jiraHost) tryResolve(); } catch { /* ignore */ }
-    });
-
-    // If user manually closes the window, succeed if any cookies are present
-    loginWin.on('close', async () => {
-      if (resolved) return;
-      const cookies = await loginWin.webContents.session.cookies.get({ domain: jiraHost });
-      if (cookies.length) { resolved = true; resolve(true); }
-      else reject(new Error('Login cancelled'));
-    });
-  });
+ipcMain.handle('acli-check-auth', async () => {
+  try {
+    await runAcli(['jira', 'workitem', 'search', '--jql', 'assignee = currentUser()', '--limit', '1', '--json']);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
+
+ipcMain.handle('acli-search', async (_event, { jql, fields, limit }) => {
+  try {
+    const args = ['jira', 'workitem', 'search', '--jql', jql, '--json'];
+    if (fields) args.push('--fields', fields);
+    if (limit) args.push('--limit', String(limit));
+    const body = await runAcli(args);
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('acli-view', async (_event, { key, fields }) => {
+  try {
+    const args = ['jira', 'workitem', 'view', key, '--json'];
+    if (fields) args.push('--fields', fields);
+    const body = await runAcli(args);
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+function hideTrayPopup() {
+  trayWindow.hide();
+  backdropWindow.hide();
+}
 
 function createTrayWindow() {
   trayWindow = new BrowserWindow({
@@ -113,7 +105,6 @@ function createTrayWindow() {
     show: false,
     frame: false,
     resizable: false,
-    alwaysOnTop: true,
     skipTaskbar: true,
     webPreferences: {
       nodeIntegration: true,
@@ -121,74 +112,116 @@ function createTrayWindow() {
       webSecurity: false,
     },
   });
+  trayWindow.setAlwaysOnTop(true, 'pop-up-menu');
   trayWindow.loadFile(path.join(__dirname, 'src', 'tray-popup.html'));
-  trayWindow.on('blur', () => trayWindow.hide());
+  trayWindow.on('blur', () => hideTrayPopup());
+
+  backdropWindow = new BrowserWindow({
+    show: false,
+    frame: false,
+    transparent: true,
+    skipTaskbar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  });
+  backdropWindow.setAlwaysOnTop(true, 'pop-up-menu');
+  backdropWindow.loadFile(path.join(__dirname, 'src', 'backdrop.html'));
+  backdropWindow.on('blur', () => {
+    if (Date.now() - trayPopupShownAt < 500) return;
+    hideTrayPopup();
+  });
+}
+
+function getTrayIcon() {
+  const file = nativeTheme.shouldUseDarkColors ? 'tray-icon.png' : 'tray-icon-light.png';
+  const img = nativeImage.createFromPath(path.join(__dirname, file)).resize({ width: 16, height: 16 });
+  img.setTemplateImage(false);
+  return img;
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'icon.png');
-  const img = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
-  img.setTemplateImage(true);
-  tray = new Tray(img);
+  tray = new Tray(getTrayIcon());
   tray.setToolTip('Jira Scanner');
+
+  nativeTheme.on('updated', () => tray.setImage(getTrayIcon()));
 
   tray.on('click', (_event, bounds) => {
     if (trayWindow.isVisible()) {
-      trayWindow.hide();
+      hideTrayPopup();
       return;
     }
-    // Position the popup just below the tray icon
+
     const { x, y } = bounds;
-    const { width, height } = trayWindow.getBounds();
+    const { width } = trayWindow.getBounds();
     trayWindow.setPosition(
       Math.round(x - width / 2 + bounds.width / 2),
       Math.round(y + bounds.height + 4)
     );
+
+    const displays = screen.getAllDisplays();
+    const minX = Math.min(...displays.map(d => d.bounds.x));
+    const minY = Math.min(...displays.map(d => d.bounds.y));
+    const maxX = Math.max(...displays.map(d => d.bounds.x + d.bounds.width));
+    const maxY = Math.max(...displays.map(d => d.bounds.y + d.bounds.height));
+    backdropWindow.setBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY });
+    backdropWindow.show();
+    backdropWindow.focus();
+
+    trayPopupShownAt = Date.now();
     trayWindow.show();
     trayWindow.webContents.send('fetch-comments');
   });
 }
 
+ipcMain.on('backdrop-clicked', () => hideTrayPopup());
+
+ipcMain.on('seen-updated', (_event, commentId, isSeen) => {
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (w !== trayWindow) w.webContents.send('seen-updated', commentId, isSeen);
+  });
+});
+
 ipcMain.on('notify', (_event, { title, body }) => {
-  if (Notification.isSupported()) new Notification({ title, body }).show();
+  if (Notification.isSupported()) new Notification({
+    title,
+    body,
+    icon: path.join(__dirname, 'icon.png'),
+  }).show();
 });
 
 ipcMain.handle('open-main-window', () => {
-  const wins = BrowserWindow.getAllWindows().filter(w => w !== trayWindow);
+  const wins = BrowserWindow.getAllWindows().filter(w => w !== trayWindow && w !== backdropWindow);
   if (wins.length) {
     wins[0].show();
     wins[0].focus();
   } else {
     createWindow();
   }
-  trayWindow.hide();
+  hideTrayPopup();
+});
+
+app.on('will-resign-active', () => {
+  if (Date.now() - trayPopupShownAt < 500) return;
+  if (trayWindow && trayWindow.isVisible()) hideTrayPopup();
 });
 
 app.whenReady().then(() => {
-  // Bypass SSL cert verification for corporate proxy/SSL inspection on all sessions
-  session.defaultSession.setCertificateVerifyProc((_req, callback) => callback(0));
-  session.fromPartition(SSO_PARTITION).setCertificateVerifyProc((_req, callback) => callback(0));
-
   createWindow();
   createTrayWindow();
   createTray();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().filter(w => w !== trayWindow).length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().filter(w => w !== trayWindow && w !== backdropWindow).length === 0) createWindow();
   });
 });
 
 app.on('web-contents-created', (_, contents) => {
   contents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://') && (url.startsWith('http:') || url.startsWith('https:'))) {
-      const allWindows = BrowserWindow.getAllWindows();
-      const isLoginWin = allWindows.some(w => {
-        try { return w.title === 'Sign in to Jira' && w.webContents.id === contents.id; } catch { return false; }
-      });
-      if (!isLoginWin) {
-        event.preventDefault();
-        shell.openExternal(url);
-      }
+      event.preventDefault();
+      shell.openExternal(url);
     }
   });
 });
